@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warma's Board Game v 1.1 !!!</title>
+    <script src="./libs/jQuery.js"></script>
+    <link rel="stylesheet" href="./libs/bootstrap-4.4.1-dist/css/bootstrap.min.css">
+    <style>
+        * {
+            list-style: none;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            font-size: 12px;
+        }
+
+        .round {
+            margin: auto;
+            text-align: center;
+        }
+
+        .head {
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .roll>ul>li {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px;
+            width: 40px;
+            height: 40px;
+            text-align: center;
+            border: solid 2px #ccc;
+        }
+
+        .tabs {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .tabs div {
+            width: 49%;
+        }
+    </style>
+</head>
+
+<body>
+    <h3 class="round">回合 <span id="roundCnt">1</span></h3>
+    <div class="head">
+        <h4 class="food">食物 <span id="foodCnt">5</span></h4>
+        <h4 class="damage">当前攻击力 <span id="dmgCnt">0</span></h4>
+    </div>
+    <div class="roll">
+        <ul>
+            <li id="dice-1" class="diceNum">?</li>
+            <li id="dice-2" class="diceNum">?</li>
+            <li id="dice-3" class="diceNum">?</li>
+            <li id="dice-4" class="diceNum">?</li>
+            <button onclick="roll()" type="button" class="btn btn-secondary" id="roll">掷骰子</button>
+        </ul>
+    </div>
+    <div class="tabs">
+        <div class="source">
+            <table class="table">
+                <thead class="thead-light">
+                    <tr>
+                        <th scope="col">物品</th>
+                        <th scope="col">数量</th>
+                        <th scope="col">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="sourcesTab">
+                </tbody>
+            </table>
+        </div>
+        <div class="monsters">
+            <table class="table">
+                <thead class="thead-light">
+                    <tr>
+                        <th scope="col">怪物</th>
+                        <th scope="col">生命值</th>
+                        <th scope="col">消耗食物</th>
+                    </tr>
+                </thead>
+                <tbody id="monstersTab">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="log">
+        <table class="table">
+            <thead class="thead-light">
+                <tr>
+                    <th scope="col">时间</th>
+                    <th scope="col">事件</th>
+                </tr>
+            </thead>
+            <tbody id="logsTab">
+            </tbody>
+        </table>
+    </div>
+
+
+</body>
+<script>
+    // 记录当前基本信息
+    var nowFoods = 5;
+    var nowDice = 1;
+    var nowRound = 1;
+
+    // 记录本回合食物变化数
+    var addFood = 0;
+    var intakeSum = 0;
+    var getFoodSum = 0;
+
+    // 记录本回合怪物食用食物总量
+    var damageSum = 0;
+
+    // 双倍资源buff开关
+    var dbSource = false;
+
+    // 当前怪物列表 一回合内最近生成怪物索引值
+    var curMonsters = [];
+    var curSpawn = 0;
+
+    // 本回合即将发生的事件
+    var curEvent;
+
+    // 输出日志列表
+    var logs = [];
+
+    // 本次骰子点数
+    var diceNum;
+
+    $(() => {
+        console.log("沃玛桌游已就绪，当前版本为 1.1");
+        clg("欢迎来到沃玛的农场，请开始你的表演");
+        refreshTab();
+    })
+
+    // 投掷骰子触发函数
+    function roll() {
+        diceNum = Math.floor(Math.random() * 6 + 1)
+
+        if (nowDice == 0) {
+            nowDice++;
+            restart();
+            refreshTab();
+            $("#roll").text("掷骰子");
+            return;
+        }
+
+        if (nowDice < 5 && nowDice > 0) {
+            $("#dice-" + nowDice).text(diceNum);
+
+            if (nowDice == 1) {
+                getMonster(monsters[diceNum]);
+            } else if (nowDice == 2) {
+                getEvent(events[diceNum]);
+            } else if (nowDice == 3) {
+                getFood(foods[diceNum]);
+            } else if (nowDice == 4) {
+                getSource(diceNum);
+                $("#roll").text("进行回合");
+            }
+            nowDice++;
+        } else {
+            runRound();
+            $("#roll").text("掷骰子");
+        }
+        refreshTab();
+    }
+
+    // 进行回合
+    function runRound() {
+        $(".diceNum").text("?");
+        curEvent();
+        curMonsters.forEach((item, idx) => {
+            if (item.run) {
+                item.run();
+            }
+        })
+        if (damageSum > 0) {
+            curMonsters.forEach((item, idx) => {
+                if ((!isNaN(item.hp)) && damageSum > 0) {
+                    let mhp = item.hp;
+                    item.hp -= damageSum;
+                    damageSum -= mhp;
+                }
+            })
+        }
+
+        getFoodSum = 0;
+        nowFoods -= intakeSum;
+        nowDice = 1;
+        nowFoods += addFood;
+        addFood = 0;
+        damageSum = 0;
+
+        if (nowFoods < 0) {
+            clg("你的食物被吃完啦，好朋友们都离你而去了！");
+            nowDice = 0;
+            refreshTab();
+            $("#roll").text("重新开始");
+            return;
+        }
+
+        nowRound++;
+        refreshTab();
+    }
+
+    // 获取怪物
+    function getMonster(monster) {
+        var mst = $.extend(true, {}, monster);
+        curSpawn = curMonsters.push(mst) - 1;
+        clg("一道雷光闪过， " + monster.name + " 降落在了你的农场");
+    }
+
+    // 获取回合事件
+    function getEvent(event) {
+        curEvent = event.run;
+        clg("第二颗骰子停在了 " + diceNum + " 似乎发生了什么变化")
+    }
+
+    // 获取食物
+    function getFood(food) {
+        getFoodSum = food.foodNum;
+        if (food.damage > 0) {
+            clg("你获得了一位好朋友 当前食物 +" + food.foodNum + " 当前攻击力 +" + food.damage)
+            addFood += food.foodNum;
+            damageSum += food.damage;
+        } else {
+            clg("你获得了 " + food.name + " 当前食物 +" + food.foodNum);
+            addFood += food.foodNum;
+        }
+    }
+
+    // 获取资源
+    function getSource(idx) {
+        clg("你获得了 " + sources[idx].name + " x " + (dbSource == false ? 1 : 2))
+        sources[idx].quantity += (dbSource == true ? 2 : 1);
+        dbSource = false;
+    }
+
+    // 刷新页面
+    function refreshTab() {
+        if (nowDice == 0) {
+            $("#roll").text("重新开始");
+        }
+        let sourcesList = "";
+        curMonsters.forEach((item, idx) => {
+            if (item.hp <= 0) {
+                clg(item.name + " 因为体力过低死掉了");
+                curMonsters.splice(idx, 1);
+            }
+        })
+        sources.forEach((item, idx) => {
+            if (idx > 0 && item.quantity > 0)
+                sourcesList += `
+                    <tr>
+                        <th scope="row">${item.name}</th>
+                        <td>${item.quantity}</td>
+                        <td><button type="button" onclick="useItem(${idx})" class="btn-sm btn-secondary">使用</button></td>
+                    </tr>
+                `
+        })
+        $("#sourcesTab").html(sourcesList);
+
+        let monstersList = "";
+        intakeSum = 0;
+        curMonsters.forEach((item, idx) => {
+            intakeSum += item.intake;
+            monstersList += `
+                <tr>
+                    <th scope="row">${item.name}</th>
+                    <td>${item.hp}</td>
+                    <td>${item.intake}</td>
+                </tr>
+            `
+        })
+        $("#monstersTab").html(monstersList);
+
+        let logsList = "";
+        logs.forEach((item, idx) => {
+            logsList += `
+                <tr>
+                    <th scope="row">${item.time}</th>
+                    <td>${item.e}</td>
+                </tr>
+            `
+        })
+        $("#logsTab").html(logsList);
+
+        $("#dmgCnt").text(damageSum);
+        $("#foodCnt").text(nowFoods + "(" + (addFood - intakeSum >= 0 ? '+' + addFood - intakeSum : addFood -
+            intakeSum) + ")");
+        $("#roundCnt").text(nowRound);
+    }
+
+    // 获取时间并按格式返回
+    function getTime() {
+        let curTime = new Date();
+        let result = curTime.getHours() + ":" +
+            (curTime.getMinutes() < 10 ? '0' + curTime.getMinutes() : curTime.getMinutes()) + ":" +
+            (curTime.getSeconds() < 10 ? '0' + curTime.getSeconds() : curTime.getSeconds());
+        return result;
+    }
+
+    // 记录日志
+    function clg(info) {
+        let curTime = getTime() + ''
+        logs.unshift({
+            time: curTime,
+            e: info
+        })
+    }
+
+    // 使用物品
+    function useItem(idx) {
+        if (sources[idx].use) {
+            sources[idx].use();
+        }
+        damageSum += sources[idx].damage;
+        sources[idx].quantity--;
+        refreshTab();
+    }
+
+    // 重启游戏
+    function restart() {
+        curMonsters = [];
+        logs = [];
+        sources.forEach((item, idx) => {
+            item.quantity = 0;
+        })
+        nowFoods = 5;
+        addFood = 0;
+        nowRound = 1;
+        curEvent = undefined;
+        dbSource = false;
+
+    }
+
+    // 怪物基本信息库
+    var monsters = [{},
+        {
+            name: "史莱姆",
+            hp: 2,
+            intake: 1
+        }, {
+            name: "哥布林",
+            hp: 4,
+            intake: 2
+        }, {
+            name: "海草怪",
+            hp: 3,
+            intake: 1
+        }, {
+            name: "火焰怪",
+            hp: '???',
+            intake: 1
+        }, {
+            name: "毒蛇",
+            hp: 5,
+            intake: 2
+        }, {
+            name: "天使",
+            hp: '???',
+            intake: 3,
+            run: () => {
+                if (curMonsters.length > 0) {
+                    let minIdx = 0;
+                    let maxHp = 9999;
+                    curMonsters.forEach((item, idx) => {
+                        if (!isNaN(item.hp) && maxHp > item.hp) {
+                            maxHp = item.hp;
+                            minIdx = idx;
+                        }
+
+                    })
+                    if (!isNaN(curMonsters[minIdx].hp)) {
+                        clg(curMonsters[minIdx].name + " 被天使之力杀死了");
+                        curMonsters.splice(minIdx, 1);
+                    }
+                }
+            }
+        }
+    ];
+
+    // 事件库
+    var events = [{},
+        {
+            name: "我方食物 x 1.5",
+            run: () => {
+                nowFoods = Math.floor(nowFoods * 1.5);
+                clg("获得来自好朋友的祝福 我方食物 x 1.5");
+            }
+        }, {
+            name: "杀死敌方怪物中最低生命值的一只（需有生命值）",
+            run: () => {
+                if (curMonsters.length > 0) {
+                    let minIdx = 0;
+                    let maxHp = 9999;
+                    curMonsters.forEach((item, idx) => {
+                        if (!isNaN(item.hp) && maxHp > item.hp) {
+                            maxHp = item.hp;
+                            minIdx = idx;
+                        }
+
+                    })
+                    if (!isNaN(curMonsters[minIdx].hp)) {
+                        clg("一股神秘的力量抹杀了 " + curMonsters[minIdx].name);
+                        curMonsters.splice(minIdx, 1);
+                    }
+                }
+            }
+        }, {
+            name: "敌方全体怪物血量减半",
+            run: () => {
+                curMonsters.forEach((item, idx) => {
+                    if (item.hp != '???')
+                        item.hp -= item.hp / 2;
+                })
+                clg("获得来自蜘蛛的祝福 敌方全体怪物血量减半");
+            }
+        }, {
+            name: "敌方怪物血量 x 1.5",
+            run: () => {
+                curMonsters.forEach((item, idx) => {
+                    if (item.hp != '???')
+                        item.hp += item.hp / 2;
+                })
+                clg("忆雨力量觉醒 敌方全体怪物血量加半");
+            }
+        }, {
+            name: "当前回合获得物品 x 2",
+            run: () => {
+                dbSource = true;
+                clg("获得来自沃玛的祝福 下一回合获得物品 x 2");
+            }
+        }, {
+            name: "回合结束后清除当前回合生成怪物",
+            run: () => {
+                if (curMonsters[curSpawn]) {
+                    console.log(curMonsters[curSpawn]);
+                    clg(curMonsters[curSpawn].name + " 因受到诅咒而死亡")
+                    curMonsters.splice(curSpawn, 1);
+                }
+            }
+        }
+    ]
+
+    // 食物库
+    var foods = [{},
+        {
+            name: "玉米",
+            foodNum: 2,
+            damage: 0
+        }, {
+            name: "水稻",
+            foodNum: 1,
+            damage: 0
+        }, {
+            name: "鸡",
+            foodNum: 5,
+            damage: 2
+        }, {
+            name: "鱼",
+            foodNum: 2,
+            damage: 0
+        }, {
+            name: "土豆",
+            foodNum: 2,
+            damage: 0
+        }, {
+            name: "青菜",
+            foodNum: 3,
+            damage: 0
+        }
+    ];
+
+    // 资源库
+    var sources = [{},
+        {
+            name: "木棒",
+            damage: 0,
+            quantity: 0,
+            use: () => {
+                clg("你拿起了 木棒，但是怪物似乎无动于衷");
+            }
+        }, {
+            name: "柴火",
+            damage: 0,
+            quantity: 0,
+            use: () => {
+                if (getFoodSum == 0) {
+                    clg("你使用了 柴火 x 1，你感觉可温暖了");
+                    return;
+                }
+                addFood += getFoodSum;
+                clg("你使用了 柴火 x 1 用于烹饪食物，获得了 食物 x " + getFoodSum);
+                getFoodSum = 0;
+                refreshTab();
+            }
+        }, {
+            name: "石头",
+            damage: 1,
+            quantity: 0,
+            use: () => {
+                clg("你投掷了一颗 石头 ，回合攻击力增加了 1");
+            }
+        }, {
+            name: "刀",
+            damage: 3,
+            quantity: 0,
+            use: () => {
+                clg("你抽出了 刀 ，回合攻击力增加了 3");
+            }
+        }, {
+            name: "笛子",
+            damage: 0,
+            quantity: 0,
+            use: () => {
+                clg("你吹响了 笛子 ，似乎没有产生什么作用");
+            }
+        }, {
+            name: "水",
+            damage: 0,
+            quantity: 0,
+            use: () => {
+                let removed = false;
+                curMonsters.forEach((item, idx) => {
+                    if (item.name == "火焰怪" && removed == false) {
+                        curMonsters.splice(idx, 1);
+                        removed = true;
+                        clg("一只 火焰怪 被浇灭了");
+                    }
+                })
+            }
+        },
+    ]
+
+    /*
+    程序思路
+
+    回合开始
+    1.掷骰子
+    2.生成怪物
+    3.掷骰子
+    4.获得事件
+    5.掷骰子
+    6.生成食物
+    7.掷骰子
+    8.生成材料
+    9.事件生效
+    10.进行互动
+    下一回合
+    */
+</script>
+
+</html>
